@@ -31,6 +31,8 @@ namespace Lens3DWinForms.Controls
         private System.Drawing.Point? drawStartPoint = null;
         private System.Drawing.Point? drawCurrentPoint = null;
         private bool isDrawing = false;
+        private bool autoSnapToEndpoints = false; // 自动吸附到端点
+        private netDxf.Vector3? snappedStartPoint = null; // 吸附后的起点
         
         // 事件：线段被选中
         public event Action<int> LineSelected;
@@ -242,7 +244,8 @@ namespace Lens3DWinForms.Controls
         {
             if (!drawStartPoint.HasValue || !drawCurrentPoint.HasValue) return;
 
-            var start3D = ScreenToWorld3D(drawStartPoint.Value);
+            // 使用吸附后的起点（如果存在），否则使用屏幕坐标转换
+            var start3D = snappedStartPoint ?? ScreenToWorld3D(drawStartPoint.Value);
             var end3D = ScreenToWorld3D(drawCurrentPoint.Value);
 
             using (var previewPen = new Pen(Color.Cyan, 2f))
@@ -255,6 +258,15 @@ namespace Lens3DWinForms.Controls
                         var start2D = ProjectTo2D(start3D, centerX, centerY);
                         var end2D = ProjectTo2D(end3D, centerX, centerY);
                         g.DrawLine(previewPen, start2D, end2D);
+                        
+                        // 如果使用了吸附，在吸附点绘制一个标记
+                        if (snappedStartPoint.HasValue)
+                        {
+                            using (var snapBrush = new SolidBrush(Color.Yellow))
+                            {
+                                g.FillEllipse(snapBrush, start2D.X - 5, start2D.Y - 5, 10, 10);
+                            }
+                        }
                         break;
 
                     case DrawMode.Circle:
@@ -457,6 +469,30 @@ namespace Lens3DWinForms.Controls
                         isDrawing = true;
                         drawStartPoint = e.Location;
                         drawCurrentPoint = e.Location;
+                        
+                        // 如果是绘制直线且启用了自动吸附，查找最近的端点
+                        if (currentDrawMode == DrawMode.Line && autoSnapToEndpoints)
+                        {
+                            var nearestPoint = FindNearestEndpoint(e.Location);
+                            if (nearestPoint.HasValue)
+                            {
+                                snappedStartPoint = nearestPoint.Value;
+                                // 更新drawStartPoint为吸附点的屏幕坐标（用于显示）
+                                int centerX = this.Width / 2;
+                                int centerY = this.Height / 2;
+                                var screenPos = ProjectTo2D(nearestPoint.Value, centerX, centerY);
+                                drawStartPoint = new System.Drawing.Point((int)screenPos.X, (int)screenPos.Y);
+                            }
+                            else
+                            {
+                                snappedStartPoint = null;
+                            }
+                        }
+                        else
+                        {
+                            snappedStartPoint = null;
+                        }
+                        
                         Invalidate();
                     }
                     else
@@ -611,7 +647,8 @@ namespace Lens3DWinForms.Controls
         {
             if (!drawStartPoint.HasValue) return;
 
-            var start3D = ScreenToWorld3D(drawStartPoint.Value);
+            // 使用吸附后的起点（如果存在），否则使用屏幕坐标转换
+            var start3D = snappedStartPoint ?? ScreenToWorld3D(drawStartPoint.Value);
             var end3D = ScreenToWorld3D(endPoint);
 
             EntityObject newEntity = null;
@@ -658,6 +695,7 @@ namespace Lens3DWinForms.Controls
             isDrawing = false;
             drawStartPoint = null;
             drawCurrentPoint = null;
+            snappedStartPoint = null;
         }
 
         private void Simple3DViewport_MouseWheel(object sender, MouseEventArgs e)
@@ -722,6 +760,7 @@ namespace Lens3DWinForms.Controls
                 isDrawing = false;
                 drawStartPoint = null;
                 drawCurrentPoint = null;
+                snappedStartPoint = null; // 清除吸附点
                 Invalidate();
             }
         }
@@ -732,6 +771,97 @@ namespace Lens3DWinForms.Controls
         public DrawMode GetDrawMode()
         {
             return currentDrawMode;
+        }
+
+        /// <summary>
+        /// 设置是否启用自动吸附到端点
+        /// </summary>
+        public void SetAutoSnapToEndpoints(bool enabled)
+        {
+            autoSnapToEndpoints = enabled;
+        }
+
+        /// <summary>
+        /// 查找最近的端点（在屏幕坐标的容差范围内）
+        /// </summary>
+        private netDxf.Vector3? FindNearestEndpoint(System.Drawing.Point screenPoint, float tolerance = 10f)
+        {
+            if (entities.Count == 0) return null;
+
+            int centerX = this.Width / 2;
+            int centerY = this.Height / 2;
+            double minDistance = double.PositiveInfinity;
+            netDxf.Vector3? nearestPoint = null;
+
+            // 收集所有端点
+            var endpoints = new List<netDxf.Vector3>();
+            foreach (var entity in entities)
+            {
+                switch (entity)
+                {
+                    case Line line:
+                        endpoints.Add(line.StartPoint);
+                        endpoints.Add(line.EndPoint);
+                        break;
+                    case Polyline3D poly:
+                        foreach (var v in poly.Vertexes)
+                            endpoints.Add(new netDxf.Vector3(v.X, v.Y, v.Z));
+                        break;
+                    case Polyline2D poly2d:
+                        foreach (var v in poly2d.Vertexes)
+                        {
+                            var pos = v.Position;
+                            endpoints.Add(new netDxf.Vector3(pos.X, pos.Y, 0));
+                        }
+                        break;
+                    case Circle circle:
+                        endpoints.Add(circle.Center);
+                        break;
+                    case Arc arc:
+                        endpoints.Add(arc.Center);
+                        break;
+                }
+            }
+
+            // 查找最近的端点
+            foreach (var endpoint in endpoints)
+            {
+                PointF screenPos = ProjectTo2D(endpoint, centerX, centerY);
+                float dx = screenPoint.X - screenPos.X;
+                float dy = screenPoint.Y - screenPos.Y;
+                float distance = (float)Math.Sqrt(dx * dx + dy * dy);
+
+                if (distance < tolerance && distance < minDistance)
+                {
+                    minDistance = distance;
+                    nearestPoint = endpoint;
+                }
+            }
+
+            return nearestPoint;
+        }
+
+        /// <summary>
+        /// 通过坐标输入设置直线终点
+        /// </summary>
+        public bool SetLineEndPointByCoordinates(double x, double y, double z)
+        {
+            if (currentDrawMode != DrawMode.Line || !isDrawing || !drawStartPoint.HasValue)
+                return false;
+
+            var endPoint3D = new netDxf.Vector3(x, y, z);
+            var startPoint3D = snappedStartPoint ?? ScreenToWorld3D(drawStartPoint.Value);
+
+            var newLine = new Line(startPoint3D, endPoint3D);
+            AddEntity(newLine);
+
+            // 重置绘制状态
+            isDrawing = false;
+            drawStartPoint = null;
+            drawCurrentPoint = null;
+            snappedStartPoint = null;
+
+            return true;
         }
 
         /// <summary>

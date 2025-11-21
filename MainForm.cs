@@ -25,6 +25,8 @@ namespace Lens3DWinForms
         private Button drawCircleButton;
         private Button drawArcButton;
         private Button cancelDrawButton;
+        private CheckBox autoSnapCheckBox;
+        private Button inputEndPointButton;
         private TabControl tabControl;
         private TabPage workSequenceTab;
         private TabPage workSequenceTabPage;
@@ -60,6 +62,8 @@ namespace Lens3DWinForms
             drawCircleButton = new Button();
             drawArcButton = new Button();
             cancelDrawButton = new Button();
+            autoSnapCheckBox = new CheckBox();
+            inputEndPointButton = new Button();
             tabControl = new TabControl();
             lineListForm = new LineListForm();
             workSequenceTab = new TabPage();
@@ -100,7 +104,7 @@ namespace Lens3DWinForms
             var buttonPanel = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 170
+                Height = 200
             };
 
             // Right panel for tabs
@@ -238,6 +242,29 @@ namespace Lens3DWinForms
                 UpdateDrawButtonStates(null);
             };
 
+            // 自动吸附到端点选项
+            autoSnapCheckBox = new CheckBox
+            {
+                Text = "自动吸附到端点",
+                Size = new System.Drawing.Size(120, 25),
+                Location = new System.Drawing.Point(10, 165),
+                AutoSize = true
+            };
+            autoSnapCheckBox.CheckedChanged += (s, e) => 
+            {
+                viewportPanel.SetAutoSnapToEndpoints(autoSnapCheckBox.Checked);
+            };
+
+            // 输入终点坐标按钮
+            inputEndPointButton = new Button
+            {
+                Text = "输入终点坐标",
+                Size = new System.Drawing.Size(100, 30),
+                Location = new System.Drawing.Point(140, 160),
+                Enabled = false
+            };
+            inputEndPointButton.Click += InputEndPointButton_Click;
+
             // 3D Viewport Panel - 使用 Simple3DViewport (GDI+ 渲染，更稳定)
             viewportPanel = new Simple3DViewport
             {
@@ -330,6 +357,8 @@ namespace Lens3DWinForms
             buttonPanel.Controls.Add(drawCircleButton);
             buttonPanel.Controls.Add(drawArcButton);
             buttonPanel.Controls.Add(cancelDrawButton);
+            buttonPanel.Controls.Add(autoSnapCheckBox);
+            buttonPanel.Controls.Add(inputEndPointButton);
             
             // Add controls to left panel
             leftPanel.Controls.Add(viewportPanel);
@@ -584,10 +613,76 @@ namespace Lens3DWinForms
             {
                 activeButton.BackColor = Color.LightGreen;
                 cancelDrawButton.Enabled = true;
+                
+                // 只有绘制直线模式才启用输入终点按钮
+                inputEndPointButton.Enabled = (activeButton == drawLineButton);
             }
             else
             {
                 cancelDrawButton.Enabled = false;
+                inputEndPointButton.Enabled = false;
+            }
+        }
+
+        private void InputEndPointButton_Click(object sender, EventArgs e)
+        {
+            // 检查是否正在绘制直线
+            if (viewportPanel.GetDrawMode() != Simple3DViewport.DrawMode.Line)
+            {
+                MessageBox.Show("请先进入绘制直线模式", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            // 创建输入对话框
+            using (var inputForm = new Form())
+            {
+                inputForm.Text = "输入终点坐标";
+                inputForm.Size = new System.Drawing.Size(300, 180);
+                inputForm.StartPosition = FormStartPosition.CenterParent;
+                inputForm.FormBorderStyle = FormBorderStyle.FixedDialog;
+                inputForm.MaximizeBox = false;
+                inputForm.MinimizeBox = false;
+
+                var labelX = new Label { Text = "X:", Location = new System.Drawing.Point(20, 20), Size = new System.Drawing.Size(30, 20) };
+                var textBoxX = new TextBox { Location = new System.Drawing.Point(60, 18), Size = new System.Drawing.Size(200, 20) };
+
+                var labelY = new Label { Text = "Y:", Location = new System.Drawing.Point(20, 50), Size = new System.Drawing.Size(30, 20) };
+                var textBoxY = new TextBox { Location = new System.Drawing.Point(60, 48), Size = new System.Drawing.Size(200, 20) };
+
+                var labelZ = new Label { Text = "Z:", Location = new System.Drawing.Point(20, 80), Size = new System.Drawing.Size(30, 20) };
+                var textBoxZ = new TextBox { Location = new System.Drawing.Point(60, 78), Size = new System.Drawing.Size(200, 20) };
+                textBoxZ.Text = "0"; // 默认Z为0
+
+                var okButton = new Button { Text = "确定", DialogResult = DialogResult.OK, Location = new System.Drawing.Point(100, 110), Size = new System.Drawing.Size(75, 30) };
+                var cancelButton = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Location = new System.Drawing.Point(185, 110), Size = new System.Drawing.Size(75, 30) };
+
+                inputForm.Controls.AddRange(new Control[] { labelX, textBoxX, labelY, textBoxY, labelZ, textBoxZ, okButton, cancelButton });
+                inputForm.AcceptButton = okButton;
+                inputForm.CancelButton = cancelButton;
+
+                if (inputForm.ShowDialog(this) == DialogResult.OK)
+                {
+                    if (double.TryParse(textBoxX.Text, out double x) &&
+                        double.TryParse(textBoxY.Text, out double y) &&
+                        double.TryParse(textBoxZ.Text, out double z))
+                    {
+                        bool success = viewportPanel.SetLineEndPointByCoordinates(x, y, z);
+                        if (success)
+                        {
+                            // 绘制完成，退出绘制模式
+                            viewportPanel.SetDrawMode(Simple3DViewport.DrawMode.None);
+                            UpdateDrawButtonStates(null);
+                        }
+                        else
+                        {
+                            MessageBox.Show("无法设置终点坐标，请确保已开始绘制直线", "错误", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        }
+                    }
+                    else
+                    {
+                        MessageBox.Show("请输入有效的数字", "错误", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                }
             }
         }
 
