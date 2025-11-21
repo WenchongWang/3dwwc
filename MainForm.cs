@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Windows.Forms;
 using Lens3DWinForms.Services;
 using Lens3DWinForms.Views;
@@ -13,6 +14,7 @@ namespace Lens3DWinForms
     {
         private Simple3DViewport viewportPanel;
         private Button openButton;
+        private Button saveButton;
         private Button showLineListButton;
         private Button openStpFileButton;
         private Button frontViewButton;
@@ -37,6 +39,7 @@ namespace Lens3DWinForms
         private TabPage planeProcessingTab;
         private RichTextBox dataDisplayTextBox;
         private DxfLoadService dxfLoadService;
+        private string currentDxfFilePath = string.Empty; // 当前打开的DXF文件路径
         private LineRearrangementView lineRearrangementView;
         private PlaneOptimizationView planeOptimizationView;
         private PlaneProcessingView planeProcessingView;
@@ -50,6 +53,7 @@ namespace Lens3DWinForms
             // Initialize UI components to avoid nullability warnings
             viewportPanel = new Simple3DViewport();
             openButton = new Button();
+            saveButton = new Button();
             showLineListButton = new Button();
             openStpFileButton = new Button();
             frontViewButton = new Button();
@@ -123,12 +127,22 @@ namespace Lens3DWinForms
             };
             openButton.Click += OpenButton_Click;
             
+            // Save button
+            saveButton = new Button
+            {
+                Text = "保存",
+                Size = new System.Drawing.Size(75, 30),
+                Location = new System.Drawing.Point(95, 10),
+                Enabled = false
+            };
+            saveButton.Click += SaveButton_Click;
+            
             // Show line list button
             showLineListButton = new Button
             {
                 Text = "线段列表",
                 Size = new System.Drawing.Size(75, 30),
-                Location = new System.Drawing.Point(95, 10),
+                Location = new System.Drawing.Point(180, 10),
                 Enabled = false
             };
             showLineListButton.Click += ShowLineListButton_Click;
@@ -138,7 +152,7 @@ namespace Lens3DWinForms
             {
                 Text = "STP文件",
                 Size = new System.Drawing.Size(75, 30),
-                Location = new System.Drawing.Point(180, 10)
+                Location = new System.Drawing.Point(265, 10)
             };
             openStpFileButton.Click += OpenStpFileButton_Click;
 
@@ -345,6 +359,7 @@ namespace Lens3DWinForms
             tabControl.TabPages.Add(workSequenceTabPage);
             // Add buttons to button panel
             buttonPanel.Controls.Add(openButton);
+            buttonPanel.Controls.Add(saveButton);
             buttonPanel.Controls.Add(showLineListButton);
             buttonPanel.Controls.Add(openStpFileButton);
             buttonPanel.Controls.Add(frontViewButton);
@@ -386,10 +401,98 @@ namespace Lens3DWinForms
             }
         }
 
+        private void SaveButton_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                // 获取当前视口中的所有实体（包括原有的和新绘制的）
+                var allEntities = viewportPanel.GetEntities();
+                
+                if (allEntities == null || allEntities.Count == 0)
+                {
+                    MessageBox.Show("没有可保存的实体", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                string saveFilePath = currentDxfFilePath;
+                
+                // 如果没有当前文件路径，或者用户想另存为，显示保存对话框
+                if (string.IsNullOrEmpty(saveFilePath))
+                {
+                    using (var saveFileDialog = new SaveFileDialog())
+                    {
+                        saveFileDialog.Filter = "DXF Files (*.dxf)|*.dxf|All Files (*.*)|*.*";
+                        saveFileDialog.DefaultExt = "dxf";
+                        saveFileDialog.FileName = "drawing.dxf";
+                        
+                        if (saveFileDialog.ShowDialog() == DialogResult.OK)
+                        {
+                            saveFilePath = saveFileDialog.FileName;
+                        }
+                        else
+                        {
+                            return; // 用户取消了保存
+                        }
+                    }
+                }
+                else
+                {
+                    // 如果已有文件路径，询问是否保存到原文件或另存为
+                    var result = MessageBox.Show(
+                        $"是否保存到原文件？\n原文件: {saveFilePath}\n\n点击'是'保存到原文件，点击'否'另存为", 
+                        "保存DXF文件", 
+                        MessageBoxButtons.YesNoCancel, 
+                        MessageBoxIcon.Question);
+                    
+                    if (result == DialogResult.Cancel)
+                    {
+                        return;
+                    }
+                    else if (result == DialogResult.No)
+                    {
+                        // 另存为
+                        using (var saveFileDialog = new SaveFileDialog())
+                        {
+                            saveFileDialog.Filter = "DXF Files (*.dxf)|*.dxf|All Files (*.*)|*.*";
+                            saveFileDialog.DefaultExt = "dxf";
+                            saveFileDialog.FileName = System.IO.Path.GetFileNameWithoutExtension(saveFilePath) + "_modified.dxf";
+                            
+                            if (saveFileDialog.ShowDialog() == DialogResult.OK)
+                            {
+                                saveFilePath = saveFileDialog.FileName;
+                            }
+                            else
+                            {
+                                return; // 用户取消了保存
+                            }
+                        }
+                    }
+                }
+
+                // 保存DXF文件
+                bool success = dxfLoadService.SaveDxfEntities(allEntities, saveFilePath);
+                
+                if (success)
+                {
+                    currentDxfFilePath = saveFilePath; // 更新当前文件路径
+                    MessageBox.Show($"成功保存 DXF 文件\n文件路径: {saveFilePath}\n实体数量: {allEntities.Count}", 
+                        "保存成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"保存 DXF 文件时出错: {ex.Message}\n\n堆栈跟踪:\n{ex.StackTrace}", 
+                    "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
         private void LoadDxfFile(string filePath)
         {
             try
             {
+                // 保存当前文件路径
+                currentDxfFilePath = filePath;
+                
                 // Use the DXF loading service for 3D rendering
                 var entities = dxfLoadService.LoadDxfEntitiesFor3D(filePath);
                 
@@ -399,6 +502,7 @@ namespace Lens3DWinForms
                 // Load lines to line list form
                 lineListForm.LoadLines(entities);
                 showLineListButton.Enabled = true;
+                saveButton.Enabled = true; // 启用保存按钮
                 
                 // Display parsed data in the text box
                 DisplayParsedData(entities, filePath);
