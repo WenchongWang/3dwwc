@@ -11,11 +11,14 @@ namespace Lens3DWinForms.Forms
     {
         private ListView lineListView;
         private CheckBox useReorderedCheckBox;
+        private Button moveUpButton;
+        private Button moveDownButton;
         private List<Line> originalLines = new();
         private List<Line>? reorderedLines;
         private int selectedLineIndex = -1;
         
         public event Action<int> LineSelected;
+        public event Action<List<Line>> LinesOrderChanged;
         
         public LineListForm()
         {
@@ -40,6 +43,24 @@ namespace Lens3DWinForms.Forms
             };
             useReorderedCheckBox.CheckedChanged += UseReorderedCheckBox_CheckedChanged;
 
+            moveUpButton = new Button
+            {
+                Text = "上移",
+                Location = new System.Drawing.Point(150, 8),
+                Size = new System.Drawing.Size(60, 25),
+                Enabled = false
+            };
+            moveUpButton.Click += (s, e) => MoveSelectedLine(-1);
+
+            moveDownButton = new Button
+            {
+                Text = "下移",
+                Location = new System.Drawing.Point(220, 8),
+                Size = new System.Drawing.Size(60, 25),
+                Enabled = false
+            };
+            moveDownButton.Click += (s, e) => MoveSelectedLine(1);
+
             lineListView = new ListView
             {
                 Location = new System.Drawing.Point(10, 40),
@@ -63,6 +84,8 @@ namespace Lens3DWinForms.Forms
             lineListView.SelectedIndexChanged += LineListView_SelectedIndexChanged;
             
             this.Controls.Add(useReorderedCheckBox);
+            this.Controls.Add(moveUpButton);
+            this.Controls.Add(moveDownButton);
             this.Controls.Add(lineListView);
         }
         
@@ -126,6 +149,8 @@ namespace Lens3DWinForms.Forms
                     LineSelected?.Invoke(index);
                 }
             }
+
+            UpdateMoveButtonsState();
         }
         
         public int GetLineCount()
@@ -152,6 +177,7 @@ namespace Lens3DWinForms.Forms
             }
 
             RefreshLineList();
+            UpdateMoveButtonsState();
         }
 
         private void RefreshLineList()
@@ -180,6 +206,7 @@ namespace Lens3DWinForms.Forms
             }
 
             selectedLineIndex = -1;
+            UpdateMoveButtonsState();
         }
 
         private List<Line>? GetCurrentLines()
@@ -190,6 +217,42 @@ namespace Lens3DWinForms.Forms
             }
 
             return originalLines;
+        }
+
+        private void MoveSelectedLine(int direction)
+        {
+            if (useReorderedCheckBox.Checked)
+                return;
+
+            var source = GetCurrentLines();
+            if (source == null || lineListView.SelectedItems.Count == 0)
+                return;
+
+            int selectedIndex = lineListView.SelectedItems[0].Index;
+            int targetIndex = selectedIndex + direction;
+            if (targetIndex < 0 || targetIndex >= source.Count)
+                return;
+
+            var item = source[selectedIndex];
+            source.RemoveAt(selectedIndex);
+            source.Insert(targetIndex, item);
+
+            RefreshLineList();
+
+            if (targetIndex >= 0 && targetIndex < lineListView.Items.Count)
+            {
+                lineListView.Items[targetIndex].Selected = true;
+                lineListView.Items[targetIndex].Focused = true;
+            }
+
+            LinesOrderChanged?.Invoke(new List<Line>(source));
+        }
+
+        private void UpdateMoveButtonsState()
+        {
+            bool canReorder = !useReorderedCheckBox.Checked && lineListView.SelectedItems.Count > 0;
+            moveUpButton.Enabled = canReorder && lineListView.SelectedItems[0].Index > 0;
+            moveDownButton.Enabled = canReorder && lineListView.SelectedItems[0].Index < lineListView.Items.Count - 1;
         }
     }
 }

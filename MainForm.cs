@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.IO;
 using System.Windows.Forms;
 using Lens3DWinForms.Services;
@@ -44,6 +45,7 @@ namespace Lens3DWinForms
         private PlaneOptimizationView planeOptimizationView;
         private PlaneProcessingView planeProcessingView;
         private LineListForm lineListForm;
+        private List<EntityObject> currentEntities = new();
         
         public MainForm()
         {
@@ -293,6 +295,7 @@ namespace Lens3DWinForms
             
             // 连接线段列表窗体的选中事件
             lineListForm.LineSelected += LineListForm_LineSelected;
+            lineListForm.LinesOrderChanged += LineListForm_LinesOrderChanged;
 
             // Tab control for right panel
             tabControl = new TabControl
@@ -405,8 +408,10 @@ namespace Lens3DWinForms
         {
             try
             {
-                // 获取当前视口中的所有实体（包括原有的和新绘制的）
-                var allEntities = viewportPanel.GetEntities();
+                // 获取当前实体列表（包括原有的和新绘制的）
+                var allEntities = (currentEntities != null && currentEntities.Count > 0)
+                    ? new List<EntityObject>(currentEntities)
+                    : viewportPanel.GetEntities();
                 
                 if (allEntities == null || allEntities.Count == 0)
                 {
@@ -495,23 +500,24 @@ namespace Lens3DWinForms
                 
                 // Use the DXF loading service for 3D rendering
                 var entities = dxfLoadService.LoadDxfEntitiesFor3D(filePath);
+                currentEntities = entities.ToList();
                 
                 // Pass entities to viewport for rendering
-                viewportPanel.LoadEntities(entities);
+                viewportPanel.LoadEntities(currentEntities);
                 
                 // Load lines to line list form
-                lineListForm.LoadLines(entities);
+                lineListForm.LoadLines(currentEntities);
                 showLineListButton.Enabled = true;
                 saveButton.Enabled = true; // 启用保存按钮
                 
                 // Display parsed data in the text box
-                DisplayParsedData(entities, filePath);
+                DisplayParsedData(currentEntities, filePath);
                 
                 // Pass line entities to rearrangement view
-                lineRearrangementView.LoadLines(entities);
+                lineRearrangementView.LoadLines(currentEntities);
                 
                 // Pass line entities to plane optimization view
-                planeOptimizationView.LoadLines(entities);
+                planeOptimizationView.LoadLines(currentEntities);
                 
                 // Get optimized planes and pass to plane processing view
                 var optimizedPlanes = planeOptimizationView.GetOptimizedPlanes();
@@ -682,6 +688,41 @@ namespace Lens3DWinForms
             lineListForm?.UpdateReorderedLines(reorderedLines);
         }
 
+        private void LineListForm_LinesOrderChanged(List<Line> reorderedLines)
+        {
+            if (reorderedLines == null || reorderedLines.Count == 0 || currentEntities == null || currentEntities.Count == 0)
+                return;
+
+            var newEntities = new List<EntityObject>(currentEntities.Count);
+            int lineIndex = 0;
+
+            foreach (var entity in currentEntities)
+            {
+                if (entity is Line && lineIndex < reorderedLines.Count)
+                {
+                    newEntities.Add(reorderedLines[lineIndex]);
+                    lineIndex++;
+                }
+                else
+                {
+                    newEntities.Add(entity);
+                }
+            }
+
+            currentEntities = newEntities;
+            viewportPanel.UpdateEntitiesOrder(currentEntities);
+
+            // 更新其它视图
+            var entityCopy = new List<EntityObject>(currentEntities);
+            lineRearrangementView.LoadLines(entityCopy);
+            planeOptimizationView.LoadLines(entityCopy);
+            var optimizedPlanes = planeOptimizationView.GetOptimizedPlanes();
+            planeProcessingView.LoadPlanes(optimizedPlanes);
+
+            // 数据展示更新
+            DisplayParsedData(entityCopy, string.IsNullOrEmpty(currentDxfFilePath) ? "手动重排" : currentDxfFilePath);
+        }
+
         private void ViewportPanel_EntityAdded(netDxf.Entities.EntityObject entity)
         {
             // 当新实体被添加时，更新相关视图
@@ -689,6 +730,7 @@ namespace Lens3DWinForms
             {
                 // 更新线段列表
                 var allEntities = viewportPanel.GetEntities();
+                currentEntities = allEntities;
                 lineListForm?.LoadLines(allEntities);
                 
                 // 更新线段重排视图

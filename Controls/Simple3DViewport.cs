@@ -925,5 +925,16 @@ namespace Lens3DWinForms.Controls
         {
             return new List<EntityObject>(entities);
         }
+
+        public void UpdateEntitiesOrder(List<EntityObject> orderedEntities)
+        {
+            if (orderedEntities == null || orderedEntities.Count == 0)
+                return;
+
+            entities = orderedEntities;
+            lines = entities.OfType<Line>().ToList();
+            ComputeModelBounds();
+            Invalidate();
+        }
     }
 }
