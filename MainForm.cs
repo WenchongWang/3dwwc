@@ -21,6 +21,10 @@ namespace Lens3DWinForms
         private Button rightViewButton;
         private Button topViewButton;
         private Button bottomViewButton;
+        private Button drawLineButton;
+        private Button drawCircleButton;
+        private Button drawArcButton;
+        private Button cancelDrawButton;
         private TabControl tabControl;
         private TabPage workSequenceTab;
         private TabPage workSequenceTabPage;
@@ -52,6 +56,10 @@ namespace Lens3DWinForms
             rightViewButton = new Button();
             topViewButton = new Button();
             bottomViewButton = new Button();
+            drawLineButton = new Button();
+            drawCircleButton = new Button();
+            drawArcButton = new Button();
+            cancelDrawButton = new Button();
             tabControl = new TabControl();
             lineListForm = new LineListForm();
             workSequenceTab = new TabPage();
@@ -92,7 +100,7 @@ namespace Lens3DWinForms
             var buttonPanel = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 130
+                Height = 170
             };
 
             // Right panel for tabs
@@ -180,6 +188,56 @@ namespace Lens3DWinForms
             };
             bottomViewButton.Click += (s, e) => viewportPanel.SetStandardView("Bottom");
 
+            // 绘制工具按钮 - 第三行
+            drawLineButton = new Button
+            {
+                Text = "绘制直线",
+                Size = new System.Drawing.Size(75, 30),
+                Location = new System.Drawing.Point(10, 130)
+            };
+            drawLineButton.Click += (s, e) => 
+            {
+                viewportPanel.SetDrawMode(Simple3DViewport.DrawMode.Line);
+                UpdateDrawButtonStates(drawLineButton);
+            };
+
+            drawCircleButton = new Button
+            {
+                Text = "绘制圆",
+                Size = new System.Drawing.Size(75, 30),
+                Location = new System.Drawing.Point(95, 130)
+            };
+            drawCircleButton.Click += (s, e) => 
+            {
+                viewportPanel.SetDrawMode(Simple3DViewport.DrawMode.Circle);
+                UpdateDrawButtonStates(drawCircleButton);
+            };
+
+            drawArcButton = new Button
+            {
+                Text = "绘制圆弧",
+                Size = new System.Drawing.Size(75, 30),
+                Location = new System.Drawing.Point(180, 130)
+            };
+            drawArcButton.Click += (s, e) => 
+            {
+                viewportPanel.SetDrawMode(Simple3DViewport.DrawMode.Arc);
+                UpdateDrawButtonStates(drawArcButton);
+            };
+
+            cancelDrawButton = new Button
+            {
+                Text = "取消绘制",
+                Size = new System.Drawing.Size(75, 30),
+                Location = new System.Drawing.Point(265, 130),
+                Enabled = false
+            };
+            cancelDrawButton.Click += (s, e) => 
+            {
+                viewportPanel.SetDrawMode(Simple3DViewport.DrawMode.None);
+                UpdateDrawButtonStates(null);
+            };
+
             // 3D Viewport Panel - 使用 Simple3DViewport (GDI+ 渲染，更稳定)
             viewportPanel = new Simple3DViewport
             {
@@ -188,6 +246,9 @@ namespace Lens3DWinForms
             
             // 连接视口的线段选中事件
             viewportPanel.LineSelected += ViewportPanel_LineSelected;
+            
+            // 连接视口的新实体添加事件
+            viewportPanel.EntityAdded += ViewportPanel_EntityAdded;
             
             // 连接线段列表窗体的选中事件
             lineListForm.LineSelected += LineListForm_LineSelected;
@@ -265,6 +326,10 @@ namespace Lens3DWinForms
             buttonPanel.Controls.Add(rightViewButton);
             buttonPanel.Controls.Add(topViewButton);
             buttonPanel.Controls.Add(bottomViewButton);
+            buttonPanel.Controls.Add(drawLineButton);
+            buttonPanel.Controls.Add(drawCircleButton);
+            buttonPanel.Controls.Add(drawArcButton);
+            buttonPanel.Controls.Add(cancelDrawButton);
             
             // Add controls to left panel
             leftPanel.Controls.Add(viewportPanel);
@@ -482,6 +547,48 @@ namespace Lens3DWinForms
                 return;
 
             lineListForm?.UpdateReorderedLines(reorderedLines);
+        }
+
+        private void ViewportPanel_EntityAdded(netDxf.Entities.EntityObject entity)
+        {
+            // 当新实体被添加时，更新相关视图
+            if (entity != null)
+            {
+                // 更新线段列表
+                var allEntities = viewportPanel.GetEntities();
+                lineListForm?.LoadLines(allEntities);
+                
+                // 更新线段重排视图
+                lineRearrangementView?.LoadLines(allEntities);
+                
+                // 更新平面优化视图
+                planeOptimizationView?.LoadLines(allEntities);
+                
+                // 更新数据展示
+                DisplayParsedData(allEntities, "手动绘制");
+                
+                // 切换到数据展示标签页
+                tabControl.SelectedTab = dataDisplayTab;
+            }
+        }
+
+        private void UpdateDrawButtonStates(Button activeButton)
+        {
+            // 重置所有按钮状态
+            drawLineButton.BackColor = SystemColors.Control;
+            drawCircleButton.BackColor = SystemColors.Control;
+            drawArcButton.BackColor = SystemColors.Control;
+            
+            // 高亮激活的按钮
+            if (activeButton != null)
+            {
+                activeButton.BackColor = Color.LightGreen;
+                cancelDrawButton.Enabled = true;
+            }
+            else
+            {
+                cancelDrawButton.Enabled = false;
+            }
         }
 
         private void InitializeComponent()

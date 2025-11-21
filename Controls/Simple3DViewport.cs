@@ -25,8 +25,17 @@ namespace Lens3DWinForms.Controls
         private netDxf.Vector3 modelCenter = netDxf.Vector3.Zero;
         private float modelScale = 1.0f;
         
+        // 绘制相关
+        public enum DrawMode { None, Line, Circle, Arc }
+        private DrawMode currentDrawMode = DrawMode.None;
+        private System.Drawing.Point? drawStartPoint = null;
+        private System.Drawing.Point? drawCurrentPoint = null;
+        private bool isDrawing = false;
+        
         // 事件：线段被选中
         public event Action<int> LineSelected;
+        // 事件：新实体被添加
+        public event Action<EntityObject> EntityAdded;
         
         public Simple3DViewport()
         {
@@ -194,6 +203,91 @@ namespace Lens3DWinForms.Controls
                         break;
                 }
             }
+            
+            // 绘制预览（如果正在绘制）
+            if (currentDrawMode != DrawMode.None && isDrawing && drawStartPoint.HasValue && drawCurrentPoint.HasValue)
+            {
+                DrawPreview(g, centerX, centerY);
+            }
+            
+            // 显示绘制提示
+            if (currentDrawMode != DrawMode.None)
+            {
+                string hint = "";
+                switch (currentDrawMode)
+                {
+                    case DrawMode.Line:
+                        hint = isDrawing ? "点击确定终点" : "点击确定起点";
+                        break;
+                    case DrawMode.Circle:
+                        hint = isDrawing ? "点击确定半径" : "点击确定圆心";
+                        break;
+                    case DrawMode.Arc:
+                        hint = isDrawing ? "点击确定半径和角度" : "点击确定圆心（将创建180度圆弧）";
+                        break;
+                }
+                
+                using (var font = new Font("Arial", 10))
+                using (var brush = new SolidBrush(Color.Yellow))
+                {
+                    g.DrawString($"绘制模式: {hint} (右键取消)", font, brush, new PointF(10, this.Height - 25));
+                }
+            }
+        }
+
+        /// <summary>
+        /// 绘制预览
+        /// </summary>
+        private void DrawPreview(Graphics g, int centerX, int centerY)
+        {
+            if (!drawStartPoint.HasValue || !drawCurrentPoint.HasValue) return;
+
+            var start3D = ScreenToWorld3D(drawStartPoint.Value);
+            var end3D = ScreenToWorld3D(drawCurrentPoint.Value);
+
+            using (var previewPen = new Pen(Color.Cyan, 2f))
+            {
+                previewPen.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
+
+                switch (currentDrawMode)
+                {
+                    case DrawMode.Line:
+                        var start2D = ProjectTo2D(start3D, centerX, centerY);
+                        var end2D = ProjectTo2D(end3D, centerX, centerY);
+                        g.DrawLine(previewPen, start2D, end2D);
+                        break;
+
+                    case DrawMode.Circle:
+                        double radius = Math.Sqrt(
+                            Math.Pow(end3D.X - start3D.X, 2) +
+                            Math.Pow(end3D.Y - start3D.Y, 2) +
+                            Math.Pow(end3D.Z - start3D.Z, 2));
+                        if (radius > 0.001)
+                        {
+                            var center2D = ProjectTo2D(start3D, centerX, centerY);
+                            float screenRadius = (float)(radius * modelScale * zoom);
+                            g.DrawEllipse(previewPen, center2D.X - screenRadius, center2D.Y - screenRadius,
+                                screenRadius * 2, screenRadius * 2);
+                        }
+                        break;
+
+                    case DrawMode.Arc:
+                        double arcRadius = Math.Sqrt(
+                            Math.Pow(end3D.X - start3D.X, 2) +
+                            Math.Pow(end3D.Y - start3D.Y, 2) +
+                            Math.Pow(end3D.Z - start3D.Z, 2));
+                        if (arcRadius > 0.001)
+                        {
+                            var center2D = ProjectTo2D(start3D, centerX, centerY);
+                            float screenRadius = (float)(arcRadius * modelScale * zoom);
+                            double angle = Math.Atan2(end3D.Y - start3D.Y, end3D.X - start3D.X) * 180.0 / Math.PI;
+                            RectangleF rect = new RectangleF(center2D.X - screenRadius, center2D.Y - screenRadius,
+                                screenRadius * 2, screenRadius * 2);
+                            g.DrawArc(previewPen, rect, (float)angle, 180f);
+                        }
+                        break;
+                }
+            }
         }
 
         private void DrawAxes(Graphics g, int centerX, int centerY)
@@ -354,7 +448,26 @@ namespace Lens3DWinForms.Controls
         {
             if (e.Button == MouseButtons.Left)
             {
-                // 检查是否点击了线段（不拖拽的情况下）
+                // 绘制模式优先
+                if (currentDrawMode != DrawMode.None)
+                {
+                    if (!isDrawing)
+                    {
+                        // 开始绘制
+                        isDrawing = true;
+                        drawStartPoint = e.Location;
+                        drawCurrentPoint = e.Location;
+                        Invalidate();
+                    }
+                    else
+                    {
+                        // 完成绘制（第二次点击）
+                        CompleteDrawing(e.Location);
+                    }
+                    return;
+                }
+                
+                // 非绘制模式：检查是否点击了线段（不拖拽的情况下）
                 System.Drawing.Point clickPoint = e.Location;
                 int clickedLineIndex = FindLineAtPoint(clickPoint);
                 
@@ -373,8 +486,19 @@ namespace Lens3DWinForms.Controls
             }
             else if (e.Button == MouseButtons.Right)
             {
-                isRightMouseDown = true;
-                lastMousePos = e.Location;
+                // 右键取消绘制
+                if (currentDrawMode != DrawMode.None && isDrawing)
+                {
+                    isDrawing = false;
+                    drawStartPoint = null;
+                    drawCurrentPoint = null;
+                    Invalidate();
+                }
+                else
+                {
+                    isRightMouseDown = true;
+                    lastMousePos = e.Location;
+                }
             }
         }
         
@@ -440,6 +564,14 @@ namespace Lens3DWinForms.Controls
 
         private void Simple3DViewport_MouseMove(object sender, MouseEventArgs e)
         {
+            // 绘制模式：更新预览
+            if (currentDrawMode != DrawMode.None && isDrawing && drawStartPoint.HasValue)
+            {
+                drawCurrentPoint = e.Location;
+                Invalidate();
+                return;
+            }
+            
             int dx = e.X - lastMousePos.X;
             int dy = e.Y - lastMousePos.Y;
             
@@ -470,6 +602,62 @@ namespace Lens3DWinForms.Controls
             {
                 isRightMouseDown = false;
             }
+        }
+
+        /// <summary>
+        /// 完成绘制
+        /// </summary>
+        private void CompleteDrawing(System.Drawing.Point endPoint)
+        {
+            if (!drawStartPoint.HasValue) return;
+
+            var start3D = ScreenToWorld3D(drawStartPoint.Value);
+            var end3D = ScreenToWorld3D(endPoint);
+
+            EntityObject newEntity = null;
+
+            switch (currentDrawMode)
+            {
+                case DrawMode.Line:
+                    newEntity = new Line(start3D, end3D);
+                    break;
+
+                case DrawMode.Circle:
+                    double radius = Math.Sqrt(
+                        Math.Pow(end3D.X - start3D.X, 2) +
+                        Math.Pow(end3D.Y - start3D.Y, 2) +
+                        Math.Pow(end3D.Z - start3D.Z, 2));
+                    if (radius > 0.001)
+                    {
+                        newEntity = new Circle(start3D, radius);
+                    }
+                    break;
+
+                case DrawMode.Arc:
+                    // 圆弧：起点为中心，终点确定半径，需要第三个点确定角度
+                    // 简化处理：创建180度圆弧
+                    double arcRadius = Math.Sqrt(
+                        Math.Pow(end3D.X - start3D.X, 2) +
+                        Math.Pow(end3D.Y - start3D.Y, 2) +
+                        Math.Pow(end3D.Z - start3D.Z, 2));
+                    if (arcRadius > 0.001)
+                    {
+                        // 计算角度
+                        double angle = Math.Atan2(end3D.Y - start3D.Y, end3D.X - start3D.X) * 180.0 / Math.PI;
+                        newEntity = new Arc(start3D, arcRadius, angle, angle + 180.0);
+                    }
+                    break;
+            }
+
+            if (newEntity != null)
+            {
+                AddEntity(newEntity);
+            }
+
+            // 重置绘制状态
+            isDrawing = false;
+            drawStartPoint = null;
+            drawCurrentPoint = null;
         }
 
         private void Simple3DViewport_MouseWheel(object sender, MouseEventArgs e)
@@ -521,6 +709,91 @@ namespace Lens3DWinForms.Controls
             panY = 0f;
             
             Invalidate();
+        }
+
+        /// <summary>
+        /// 设置绘制模式
+        /// </summary>
+        public void SetDrawMode(DrawMode mode)
+        {
+            if (currentDrawMode != mode)
+            {
+                currentDrawMode = mode;
+                isDrawing = false;
+                drawStartPoint = null;
+                drawCurrentPoint = null;
+                Invalidate();
+            }
+        }
+
+        /// <summary>
+        /// 获取当前绘制模式
+        /// </summary>
+        public DrawMode GetDrawMode()
+        {
+            return currentDrawMode;
+        }
+
+        /// <summary>
+        /// 将屏幕坐标转换为3D世界坐标（在XY平面上，Z=0）
+        /// </summary>
+        private netDxf.Vector3 ScreenToWorld3D(System.Drawing.Point screenPoint)
+        {
+            int centerX = this.Width / 2;
+            int centerY = this.Height / 2;
+            
+            // 屏幕坐标相对于中心
+            float screenX = screenPoint.X - centerX - panX;
+            float screenY = -(screenPoint.Y - centerY - panY); // 反转Y轴
+            
+            // 反向旋转
+            float radX = -rotationX * (float)Math.PI / 180f;
+            float radY = -rotationY * (float)Math.PI / 180f;
+            
+            // 先绕X轴反向旋转
+            float z = screenY * (float)Math.Sin(radX);
+            float y = screenY * (float)Math.Cos(radX);
+            
+            // 再绕Y轴反向旋转
+            float x = screenX * (float)Math.Cos(radY) - z * (float)Math.Sin(radY);
+            z = screenX * (float)Math.Sin(radY) + z * (float)Math.Cos(radY);
+            
+            // 反向缩放和居中
+            if (modelScale * zoom > 0.0001f)
+            {
+                x = x / (modelScale * zoom) + (float)modelCenter.X;
+                y = y / (modelScale * zoom) + (float)modelCenter.Y;
+                z = z / (modelScale * zoom) + (float)modelCenter.Z;
+            }
+            
+            // 在XY平面上绘制（Z=0）
+            return new netDxf.Vector3(x, y, 0);
+        }
+
+        /// <summary>
+        /// 添加实体到列表
+        /// </summary>
+        public void AddEntity(EntityObject entity)
+        {
+            if (entity != null)
+            {
+                entities.Add(entity);
+                if (entity is Line line)
+                {
+                    lines.Add(line);
+                }
+                ComputeModelBounds();
+                Invalidate();
+                EntityAdded?.Invoke(entity);
+            }
+        }
+
+        /// <summary>
+        /// 获取所有实体
+        /// </summary>
+        public List<EntityObject> GetEntities()
+        {
+            return new List<EntityObject>(entities);
         }
     }
 }
